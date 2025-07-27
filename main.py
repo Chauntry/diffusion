@@ -22,16 +22,18 @@ class FluxPoseAdpter(nn.Modules)
         pooled_projection_dim: int = 768,
         guidance_embeds: bool = False,
         axes_dims_rope: List[int] = [16, 56, 56],
+        instance_num = 256,
+
     ):
         super().__init__()
         self.out_channels = in_channels
         self.inner_dim = num_attention_heads * attention_head_dim
 
 
+
+        scale = self.inner_dim ** 0.5
         self.instance_embedding = nn.parameter(torch.randn(1, self.instance_tokens, self.inner_dim) * scale)
-
         self.kpts_embedding = nn.parameter(torch.randn(1, self.kpts_num, self.inner_dim) * scale)
-
 
 
         self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
@@ -77,36 +79,37 @@ class FluxPoseAdpter(nn.Modules)
         )
 
 
-        self.contorl_layers = [
-            nn.ModuleList(
-                nn.Conv2d(3, 16, 3, padding=1),
-                nn.SiLU(),
-                nn.Conv2d(16, 16, 3, padding=1),
+
+        self.contorl_layers = []
+
+        for _ in range(nums_layers):
+
+            self.contorl_layer.append(
+                nn.sequence(
+                    nn.Linear(self.inner_dim, self.inner_dim // 6, bias = True)
+                    nn.SiLU(),
+                    nn.Linear(self.inner_dim // 6, self.inner_dim, bias = True)            
+                )
+
             )
-            for _ in range(nums_layers)
-        ]
 
 
-        self.to_global = FluxTransformerBlock(
-            dim=self.inner_dim,
-            num_attention_heads=num_attention_heads,
-            attention_head_dim=attention_head_dim,
-        )
+
 
 
     def pose_init():
 
 
-        self.fuse_blocks = deepcopy(self.transformer_blocks[:ad_layers[0]])
-        self.expand_blocks = []
+        self.fuse_blocks = copy.deepcopy(self.transformer_blocks[:ad_layers[0]])
+        self.expand_blocks = copy.deepcopy(self.transformer_blocks[:ad_layers[0]])
     
 
-
+    # image rotay use [image:]
     def foward(
         self,
         hidden_states: torch.Tensor,
         controlnet_cond: torch.Tensor,
-        kpts_ids: torch.Tensor = None,
+        kpts_id: torch.Tensor = None,
         encoder_hidden_states: torch.Tensor = None,
         image_rotary_pos: torch.Tensor = None,
         instance_num: torch.Tensor = None,
@@ -115,6 +118,15 @@ class FluxPoseAdpter(nn.Modules)
         return_dict: bool = True,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
 
+        instance_id = [_ for x in instance_num for _ in range(x)]
+        hidden_states = instance_expend(hidden_states)
+        encoder_hidden_states = instance_expend(encoder_hidden_states)
+
+        timestep = instance_expend(timestep)
+
+        pooled_projection_dim = instance_expend(pooled_projection_dim)
+
+        time_emb = ()
 
 
         controlnet_cond = self.input_hint_block(controlnet_cond)
@@ -123,11 +135,35 @@ class FluxPoseAdpter(nn.Modules)
 
 
 
-        image_token_num = controlnet_cond.shape[1] 
+        image_token_num = controlnet_cond.shape[1]
 
 
-        kps_pos_emb = self.pos_embed(kps_ids)
-        instance_emb = self.pos_embed(instance_id)
+
+
+
+        
+        instance_emb = []
+        pos_embs = []
+
+
+        for bs in batch_size:            
+            instance_ids = torch.zeros(self.instance_tokens, 3)
+            instance_ids[:,0] = instance_ids[:,0] + instance_id[bs] + 2
+
+
+            instance_emb = self.pos_embed(instance_id)
+
+            kps_ids = torch.zeros(self.kpts_num, 3)
+            kps_ids[:,0] =  kps_ids[:,0] + 1
+            kps_ids[:,1] =  kpts_id[:, :,1]
+            kps_ids[:,2] =  kpts_id[:, :,3]
+           
+
+            pos_embs = self.pos_embed(kps_ids)
+
+
+        instance_emb = combine_pos_emb(instance_emb)
+        pos_embs = combine_pos_emb(pos_embs)
 
 
         # fuse image and kps pos emb
@@ -155,7 +191,7 @@ class FluxPoseAdpter(nn.Modules)
                 image_kpts_rotary_emb,
             )
 
-        controlnet_cond = controlnet_cond[:, :image_token_num] + self.img_in_layers[1](hidden_states)
+        controlnet_cond[:, :image_token_num] = controlnet_cond[:, :image_token_num] + self.img_in_layers[1](hidden_states)
 
         instance_embedding = self.instance_embedding + torch.zeros(self.kpts_embedding.shape)
 
@@ -168,13 +204,15 @@ class FluxPoseAdpter(nn.Modules)
                 image_kpts_instance_rotary_emb,
             )
 
-        # controlnet_cond = 
+        controlnet_cond = controlnet_cond[:, :image_token_num]
 
         res_block = []
 
         for contorlnet in self.contorl_layers:
             
             res_block = res_block + (contorlnet(controlnet_cond))
+
+
 
 
         return None, res_blocks
