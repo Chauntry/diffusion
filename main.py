@@ -22,7 +22,8 @@ class FluxPoseAdpter(nn.Modules)
         pooled_projection_dim: int = 768,
         guidance_embeds: bool = False,
         axes_dims_rope: List[int] = [16, 56, 56],
-        instance_num = 256,
+        instance_tokens = 256,
+        outer_dim = 2560
 
     ):
         super().__init__()
@@ -111,9 +112,11 @@ class FluxPoseAdpter(nn.Modules)
         controlnet_cond: torch.Tensor,
         kpts_id: torch.Tensor = None,
         encoder_hidden_states: torch.Tensor = None,
-        image_rotary_pos: torch.Tensor = None,
+        image_rotary_emb: torch.Tensor = None,
         instance_num: torch.Tensor = None,
         timestep: torch.LongTensor = None,
+        guidance: torch.Tensor = None,
+        pooled_projections: torch.Tensor = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = True,
     ) -> Union[torch.FloatTensor, Transformer2DModelOutput]:
@@ -124,9 +127,14 @@ class FluxPoseAdpter(nn.Modules)
 
         timestep = instance_expend(timestep)
 
-        pooled_projection_dim = instance_expend(pooled_projection_dim)
+        pooled_projections = instance_expend(pooled_projections)
 
-        time_emb = ()
+
+        temb = (
+            self.time_text_embed(timestep, pooled_projections)
+            if guidance is None
+            else self.time_text_embed(timestep, guidance, pooled_projections)
+        )
 
 
         controlnet_cond = self.input_hint_block(controlnet_cond)
@@ -137,13 +145,9 @@ class FluxPoseAdpter(nn.Modules)
 
         image_token_num = controlnet_cond.shape[1]
 
-
-
-
-
         
-        instance_emb = []
-        pos_embs = []
+        image_kpts_rotary_embs = []
+        image_kpts_instance_rotary_embs = []
 
 
         for bs in batch_size:            
@@ -155,21 +159,22 @@ class FluxPoseAdpter(nn.Modules)
 
             kps_ids = torch.zeros(self.kpts_num, 3)
             kps_ids[:,0] =  kps_ids[:,0] + 1
-            kps_ids[:,1] =  kpts_id[:, :,1]
-            kps_ids[:,2] =  kpts_id[:, :,3]
+            kps_ids[:,1] =  kpts_id[:, :,1] + kps_ids[:,1]
+            kps_ids[:,2] =  kpts_id[:, :,0] + kps_id[:,2]
            
 
             pos_embs = self.pos_embed(kps_ids)
 
+			image_kpts_rotary_emb = [torch.cat([_, __], dim=0) for _, __ in zip(image_rotary_emb, kpts_rotary_emb)]
+            
+            image_kpts_rotary_embs.append(image_kpts_rotary_emb)
 
-        instance_emb = combine_pos_emb(instance_emb)
-        pos_embs = combine_pos_emb(pos_embs)
+			image_kpts_instance_rotary_emb = [torch.cat([_, __[:image_tokens]], dim=0) for _, __ in zip(image_rotary_emb, image_kpts_rotary_emb)]
+            image_kpts_instance_rotary_embs.append(image_kpts_instance_rotary_emb)
 
+        image_kpts_rotary_emb = combine_pos_emb(image_kpts_rotary_embs)
+        image_kpts_instance_rotary_emb = combine_pos_emb(image_kpts_instance_rotary_embs)
 
-        # fuse image and kps pos emb
-        # fuse image and instance  pos emb
-        image_kpts_rotary_emb = [(image, kpts) for image, kpts in zip(image_rotary_pos, kps_pos_emb) ]
-        image_kpts_instance_rotary_emb = [(image, kpts) for image, kpts in zip(image_kpts_rotary_emb, instance_emb) ]
 
 
         controlnet_cond = self.x_embedder(controlnet_cond) + self.img_in_layers[0](hidden_states)
