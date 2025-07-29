@@ -157,7 +157,7 @@ class FluxPoseAdpter(nn.Modules)
         
             kpts_rotary_emb = self.pos_embed(kps_ids)
 
-			image_kpts_rotary_emb = [torch.cat([_, __], dim=0) for _, __ in zip(image_rotary_emb, kpts_rotary_emb)]
+            image_kpts_rotary_emb = [torch.cat([_, __], dim=0) for _, __ in zip(image_rotary_emb, kpts_rotary_emb)]
             
             image_kpts_rotary_embs.append(image_kpts_rotary_emb)
 
