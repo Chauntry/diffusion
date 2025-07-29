@@ -23,7 +23,8 @@ class FluxPoseAdpter(nn.Modules)
         guidance_embeds: bool = False,
         axes_dims_rope: List[int] = [16, 56, 56],
         instance_tokens = 256,
-        outer_dim = 2560
+        outer_dim = 2560,
+        kpts_num =133
 
     ):
         super().__init__()
@@ -47,7 +48,7 @@ class FluxPoseAdpter(nn.Modules)
 
         self.context_embedder = nn.Linear(joint_attention_dim, self.inner_dim)
         self.x_embedder = torch.nn.Linear(in_channels, self.inner_dim)
-        self.img_in_layers = nn.modulelist(nn.linear(outer_dim, self.inner_dim, bias=true) for _ in range(2))
+        self.img_in_layers = nn.modulelist(nn.linear(outer_dim, self.inner_dim, bias=True) for _ in range(2))
 
 
         self.transformer_blocks = nn.ModuleList(
@@ -62,21 +63,19 @@ class FluxPoseAdpter(nn.Modules)
         )
 
         self.input_hint_block = nn.Sequential(
-            nn.Conv2d(3, 16, 3, padding=1),
+            nn.Conv2d(self.kpts_num, 16, 3, padding=1),
             nn.SiLU(),
-            nn.Conv2d(16, 16, 3, padding=1),
+            nn.Conv2d(16, 64, 3, padding=1),
             nn.SiLU(),
-            nn.Conv2d(16, 16, 3, padding=1, stride=2),
+            nn.Conv2d(64, 16, 3, padding=1, stride=2),
             nn.SiLU(),
-            nn.Conv2d(16, 16, 3, padding=1),
+            nn.Conv2d(16, 64, 3, padding=1),
             nn.SiLU(),
-            nn.Conv2d(16, 16, 3, padding=1, stride=2),
+            nn.Conv2d(64, 16, 3, padding=1, stride=2),
             nn.SiLU(),
-            nn.Conv2d(16, 16, 3, padding=1),
+            nn.Conv2d(16, 64, 3, padding=1),
             nn.SiLU(),
-            nn.Conv2d(16, 16, 3, padding=1, stride=2),
-            nn.SiLU(),
-            zero_module(nn.Conv2d(16, 16, 3, padding=1))
+            nn.Conv2d(64, 16, 3, padding=1, stride=2),
         )
 
 
@@ -141,35 +140,28 @@ class FluxPoseAdpter(nn.Modules)
         controlnet_cond = rearrange(controlnet_cond, "b c (h ph) (w pw) -> b (h w) (c ph pw)", ph=2, pw=2) # flatten into patch height and patch width (ph, pw) across all channels, so each batch entry is a sequence of patches that's got c * patch-pixel elements.
         controlnet_cond = self.img_in_layers[0](hidden_states) + self.x_embedder(controlnet_cond)
 
-
-
         image_token_num = controlnet_cond.shape[1]
 
-        
         image_kpts_rotary_embs = []
         image_kpts_instance_rotary_embs = []
 
-
         for bs in batch_size:            
             instance_ids = torch.zeros(self.instance_tokens, 3)
-            instance_ids[:,0] = instance_ids[:,0] + instance_id[bs] + 2
-
-
-            instance_emb = self.pos_embed(instance_id)
+            instance_ids[:,0] = instance_ids[:,0] + bs + 2
+            instance_rotary_emb = self.pos_embed(instance_id)
 
             kps_ids = torch.zeros(self.kpts_num, 3)
             kps_ids[:,0] =  kps_ids[:,0] + 1
             kps_ids[:,1] =  kpts_id[:, :,1] + kps_ids[:,1]
-            kps_ids[:,2] =  kpts_id[:, :,0] + kps_id[:,2]
-           
-
-            pos_embs = self.pos_embed(kps_ids)
+            kps_ids[:,2] =  kpts_id[:, :,0] + kps_ids[:,2]
+        
+            kpts_rotary_emb = self.pos_embed(kps_ids)
 
 			image_kpts_rotary_emb = [torch.cat([_, __], dim=0) for _, __ in zip(image_rotary_emb, kpts_rotary_emb)]
             
             image_kpts_rotary_embs.append(image_kpts_rotary_emb)
 
-			image_kpts_instance_rotary_emb = [torch.cat([_, __[:image_tokens]], dim=0) for _, __ in zip(image_rotary_emb, image_kpts_rotary_emb)]
+            instance_image_kpts_rotary_emb = [torch.cat([_, __[-img_token_num - self.kpts_num:, :]], dim=0) for _, __ in zip(instance_rotary_emb, image_kpts_rotary_emb)]
             image_kpts_instance_rotary_embs.append(image_kpts_instance_rotary_emb)
 
         image_kpts_rotary_emb = combine_pos_emb(image_kpts_rotary_embs)
@@ -216,8 +208,6 @@ class FluxPoseAdpter(nn.Modules)
         for contorlnet in self.contorl_layers:
             
             res_block = res_block + (contorlnet(controlnet_cond))
-
-
 
 
         return None, res_blocks
