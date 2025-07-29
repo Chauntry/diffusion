@@ -145,6 +145,9 @@ class FluxPoseAdpter(nn.Modules)
         image_kpts_rotary_embs = []
         image_kpts_instance_rotary_embs = []
 
+        kps_ids[:,:0]  = kps_ids[:,:0] / 16
+        kps_ids[:,:1]  = kps_ids[:,:1] / 16
+
         for bs in batch_size:            
             instance_ids = torch.zeros(self.instance_tokens, 3)
             instance_ids[:,0] = instance_ids[:,0] + bs + 2
