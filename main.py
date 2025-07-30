@@ -24,14 +24,12 @@ class FluxPoseAdpter(nn.Modules)
         axes_dims_rope: List[int] = [16, 56, 56],
         instance_tokens = 256,
         outer_dim = 2560,
-        kpts_num =133
+        kpts_num = 133
 
     ):
         super().__init__()
         self.out_channels = in_channels
         self.inner_dim = num_attention_heads * attention_head_dim
-
-
 
         scale = self.inner_dim ** 0.5
         self.instance_embedding = nn.parameter(torch.randn(1, self.instance_tokens, self.inner_dim) * scale)
@@ -88,7 +86,7 @@ class FluxPoseAdpter(nn.Modules)
                 nn.sequence(
                     nn.Linear(self.inner_dim, self.inner_dim // 6, bias = True)
                     nn.SiLU(),
-                    nn.Linear(self.inner_dim // 6, self.inner_dim, bias = True)            
+                    nn.Linear(self.inner_dim // 6, outer_dim, bias = True)            
                 )
 
             )
@@ -177,7 +175,7 @@ class FluxPoseAdpter(nn.Modules)
 
         kpts_embedding  = self.kpts_embedding + torch.zeros(self.kpts_embedding.shape)
 
-        controlnet_cond = torch.cat(controlnet_cond, kpts_embedding)
+        controlnet_cond = torch.cat([controlnet_cond, kpts_embedding], dim=1)
 
         encoder_hidden_states = self.context_embedder(encoder_hidden_states_norm)
 
@@ -191,7 +189,7 @@ class FluxPoseAdpter(nn.Modules)
                 image_kpts_rotary_emb,
             )
 
-        controlnet_cond[:, :image_token_num] = controlnet_cond[:, :image_token_num] + self.img_in_layers[1](hidden_states)
+        controlnet_cond[:, :image_token_num, :] = controlnet_cond[:, :image_token_num, :]+ self.img_in_layers[1](hidden_states)
 
         instance_embedding = self.instance_embedding + torch.zeros(self.kpts_embedding.shape)
 
