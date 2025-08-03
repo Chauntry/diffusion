@@ -66,7 +66,7 @@ def add_noise(x, noise, t1, t2):
 
     sample = x * (1 - sigma2) / (1 - sigma1)
 
-    beta = sigma2 ** 2 - sigma1 * (1 - sigma2) / (1 - sigma1)
+    beta = sigma2 ** 2 - (sigma1 * (1 - sigma2) / (1 - sigma1)) ** 2
 
     beta = beta ** 0.5
 
@@ -122,8 +122,10 @@ x_mid = sigma_mid * x0_eps + (1 - sigma_mid) * x1
 
 x_t = add_noise(x_mid, torch.randn(x.shape), t_mid, t)
 
+
+sigma = expand_dims(1 -t, x.dim())
 v_fake = fake_model(x_t, t)
-v_target = (x1 - x_t) / sigma_mid
+v_target = (x1 - x_t) / sigma
 
 loss_fake = torch.mean((v_fake - v_target)**2)
 
@@ -131,12 +133,12 @@ loss_fake = torch.mean((v_fake - v_target)**2)
 # ===========================================
 
 
+with torch.no_grad():
+    t_idx = torch.randint(0, num_steps, (bs,))
+    xt_g = torch.randn(x.shape)
 
-t_idx = torch.randint(0, num_steps, (bs,))
-xt_g = torch.randn(x.shape)
-
-for i in range(bs):
-    xt_g[i] = noise_latent_list[t_idx[i]]
+    for i in range(bs):
+        xt_g[i] = noise_latent_list[t_idx[i]]
 
 t_g = timesteps[t_idx]
 t_mid = timesteps[t_idx + 1]
@@ -161,7 +163,7 @@ with torch.no_grad():
     v_real = predict(real_model, x_t, t)
     v_revisit = x1 + v_real - v_fake
 
-huber_c = 0.15
+huber_c = 1e-3 / ( (64*64*4)**0.5 ) * ( (noisy_model_latents.shape[1:].numel())**0.5 )
 
-loss = ((x1 - v_revisit) ** 2 + huber_c ** 2) ** 0.5 - huber_c
+loss = ((x1 - v_revisit) ** 2 + huber_c ** 2) ** 0.5 - huber_c ** 2
 
